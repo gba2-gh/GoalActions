@@ -1,3 +1,4 @@
+#modified version for soccernet
 import os
 import json
 import re
@@ -167,32 +168,35 @@ def is_goal_event(annotation, goal_events, home_team, away_team):
     description = annotation['description'].lower()
     total_minutes = parse_game_time(annotation['gameTime'])
     if total_minutes is None:
-        return False, None
+        return False, None, False  # Added penalty flag
 
+    penalty_detected = 'penalty' in description
+    
     for event in goal_events:
         if 0 <= (total_minutes - event['minute']) <= 1.5:
             last_name_lower = event['last_name'].lower()
             full_name_lower = event['full_name'].lower()
             if last_name_lower in description or full_name_lower in description:
-                return True, event['team']
+                return True, event['team'], penalty_detected  # Return penalty status
 
     goal_keywords = ['goal!', 'scores!', 'netted!', 'converts!', 'finishes!',
                     'goal:', 'scores :', 'scored!', 'goal -', 'scores -']
     if any(kw in description for kw in goal_keywords):
         if home_team.lower() in description:
-            return True, 'home'
+            return True, 'home', penalty_detected
         elif away_team.lower() in description:
-            return True, 'away'
+            return True, 'away', penalty_detected
 
     if OUTCOME_REGEX.search(description):
         if 'saved' not in description and 'blocked' not in description and 'clear' not in description:
             if home_team.lower() in description:
-                return True, 'home'
+                return True, 'home', penalty_detected
             elif away_team.lower() in description:
-                return True, 'away'
+                return True, 'away', penalty_detected
 
-    return False, None
+    return False, None, penalty_detected
 
+    
 def is_shooting_action(description):
     """Check if description is a genuine shot attempt (goal or no goal)."""
     desc = description.lower()
@@ -205,37 +209,39 @@ def is_shooting_action(description):
     # Saves/blocks/denied remain valid as shot attempts
     return True
 
-# -----------------------------
-# Clustering to avoid duplicates in same sequence
-# -----------------------------
 def cluster_events(events, time_gap=1.0):
-    """Cluster events within `time_gap` minutes, keeping only the last in each sequence."""
+    """Cluster non-goal events while preserving all goals and penalties"""
     clustered = []
     current_cluster = []
-
+    
     for e in events:
-        if not current_cluster:
-            current_cluster.append(e)
+        # Preserve all goals and penalties individually
+        if e['label'] in ["Goal", "Penalty"]:
+            if current_cluster:
+                clustered.append(select_event(current_cluster))
+                current_cluster = []
+            clustered.append(e)
         else:
-            prev_time = current_cluster[-1]['minute']
-            if e['minute'] - prev_time <= time_gap:
+            # Cluster non-goal events
+            if not current_cluster:
                 current_cluster.append(e)
             else:
-                clustered.append(select_event(current_cluster))
-                current_cluster = [e]
-
+                prev_time = current_cluster[-1]['minute']
+                if e['minute'] - prev_time <= time_gap:
+                    current_cluster.append(e)
+                else:
+                    clustered.append(select_event(current_cluster))
+                    current_cluster = [e]
+    
+    # Handle remaining non-goal events
     if current_cluster:
         clustered.append(select_event(current_cluster))
-
+        
     return clustered
 
 def select_event(cluster):
-    """Keep final event, preferring Goal if present."""
-    for e in reversed(cluster):
-        if e['label'] == "Goal":
-            return e
-    return cluster[-1]
-
+    """For non-goal clusters, keep the last event"""
+    return cluster[-1]  # Always last event in cluster
 # -----------------------------
 # File processing
 # -----------------------------
@@ -261,17 +267,23 @@ def process_file(input_path, output_path):
         desc = annotation['description']
         is_goal = False
         team = None
+        is_penalty = False
 
-        # 修改：当label是 "soccer-ball" 或 "soccer-ball-own" 都视为进球事件
+        # Handle goal annotations
         if annotation.get('label') in ['soccer-ball', 'soccer-ball-own']:
-            is_goal = True
-            _, team = is_goal_event(annotation, goal_events, home_team, away_team)
+            is_goal=True
+            _, team, is_penalty = is_goal_event(annotation, goal_events, home_team, away_team)
         elif is_shooting_action(desc):
-            is_goal, team = is_goal_event(annotation, goal_events, home_team, away_team)
+            is_goal, team,_ = is_goal_event(annotation, goal_events, home_team, away_team)
         else:
             continue
 
-        label = "Goal" if is_goal else "No Goal"
+        # Determine label based on penalty status
+        if is_goal:
+            label = "Penalty" if is_penalty else "Goal"
+        else:
+            label = "No Goal"
+            
         minute = parse_game_time(annotation['gameTime'])
         events_data.append({
             'label': label,
@@ -286,7 +298,6 @@ def process_file(input_path, output_path):
 
     with open(output_path, 'w', encoding='utf-8') as f_out:
         f_out.write("\n".join(output_lines))
-
 
 # -----------------------------
 # Main entry
