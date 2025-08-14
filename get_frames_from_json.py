@@ -6,7 +6,7 @@ import pandas as pd
 import json
 
 
-video_root = "D:\\soccernetDataset\\"
+video_root = "D:/soccernetDataset/"
 
 def save_dicts_to_txt(dict_list, filename="output.txt"):
     with open(filename, "w", encoding="utf-8") as f:
@@ -32,7 +32,7 @@ def get_contrastive_aligned_time(json_path,  target_description):
         for entry in annotations:
             if (normalize(entry.get("description", "")) == normalize(target_description)):
                 return entry.get("contrastive_aligned_gameTime")
-    print('json info not found')
+    print(f'{json_path}: json info not found')
     return ''  # If not found
 
 
@@ -67,18 +67,19 @@ def construct_dict_play(line, id, goal_bool, end_time_offset):
                     'match_ht': match_half_time,
                     'play_start': play_start,
                     'play_end': play_start+end_time_offset,
-                     'commentary': text_description,}
+                     'caption': text_description,}
     return goal_play
 
 
 
-folder_data= "data\goal_files"
+folder_data= "data/goal_files"
 list_dir = os.listdir(folder_data)
 
 all_goals =[]
 all_non_goals= []
 other_plays = []
 all_plays = []
+penalties = []
 
 
 #process txt with format: 
@@ -91,7 +92,7 @@ for filename in list_dir:
     end_time_offset = 10
     start_time_offset = 0
     #read file with goals and no goals
-    complete_fn = folder_data + "\\" + filename
+    complete_fn = folder_data + "/" + filename
     with open(complete_fn, mode ="r") as file:
         for line in file:
             splitted =line.split(maxsplit = 1)
@@ -101,15 +102,26 @@ for filename in list_dir:
             elif splitted[0] == "No":
                 goal_bool = False
                 splitted = splitted[1].split(maxsplit = 1)
+            elif splitted[0] == "Penalty":
+                action = {'play': splitted}
+                print('Penalty')
+                penalties.append(action)
+                continue
+
+            
 
             play = construct_dict_play(splitted[1], len(all_plays), goal_bool, end_time_offset)
+
+            if play['play_start'] > 2701:  ## remove non goals after 45 minutes
+                other_plays.append(play)
+                continue
 
             if int(play['match_ht']) > 2:
                 other_plays.append(play)
                 continue
 
             cleaned_match = match.replace("_", " ") #soccernet dataset folders dont use _ 
-            video_path = f"{video_root}{league}\\{year}\\{cleaned_match}\\{play['match_ht']}_"
+            video_path = f"{video_root}{league}/{year}/{cleaned_match}"
             play['league'] = league
             play['year'] = year
             play['match'] = cleaned_match
@@ -128,7 +140,7 @@ for filename in list_dir:
 for play in all_plays:
     root_path = 'D:\\MatchTime'
     json_path = f"{root_path}\\{play['league']}_{play['year']}\\{play['match']}\\Labels-caption.json" 
-    play_timestamp = get_contrastive_aligned_time(json_path, play['commentary'])
+    play_timestamp = get_contrastive_aligned_time(json_path, play['caption'])
     if play_timestamp!='':
         parts = play_timestamp.split("-")
         play_timestamp = parts[1]
@@ -137,8 +149,42 @@ for play in all_plays:
         play['play_start_MT'] = play_start
         play['play_end_MT']= play_start+end_time_offset
     else:
-        play['play_start_MT'] = 0
-        play['play_end_MT']= 0
+        play['play_start_MT'] = play['play_start']
+        play['play_end_MT']= play['play_end']
+
+
+#ADD SN-Echoes commentary
+end_offset_commentary = 40
+start_offset_commentary = 40
+no_comm_goals=0
+no_comm_no_goals=0
+
+for play in all_plays:
+    play_commentary =''
+    root_path = 'D:\\SoccerNetEchoes\\sn-echoes\\Dataset\\complete'
+    json_path = f"{root_path}\\{play['league']}\\{play['year']}\\{play['match']}\\{play['match_ht']}_asr.json" 
+    if os.path.exists(json_path):
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            for key, value in data["segments"].items():
+                comment_start_time = value[0]
+                comment_end_time = value[1]
+                comment = value[2]
+                if play['play_start_MT'] + end_offset_commentary < comment_start_time :
+                    break
+
+                if play['play_start_MT'] -start_offset_commentary < comment_start_time:
+                    play_commentary = f'{play_commentary} [{comment_start_time}, {comment_end_time}], {comment};'
+    if play_commentary == "":
+        if play['play_is_goal'] == True:
+            no_comm_goals+=1
+        else:
+            no_comm_no_goals+=1
+
+    play['narration'] = play_commentary
+
+print(f'no_comm_goals : {no_comm_goals}')         
+print(f'no_comm_no_goals : {no_comm_no_goals}')                
 
 
 os.makedirs('results', exist_ok=True)
@@ -147,8 +193,10 @@ print("Saving to txt...")
 save_dicts_to_txt(all_goals, "results\\all_goals.txt")
 save_dicts_to_txt(all_non_goals, "results\\all_non_goals.txt")
 save_dicts_to_txt(other_plays, "results\\other_plays.txt")
+save_dicts_to_txt(penalties, "results\\penalties.txt")
 
-new_order = ['id', 'play_is_goal', 'league', 'year', 'match', 'video_path',  'match_ht', 'commentary', 'play_start', 'play_end', 'play_start_MT','play_end_MT' ]
+
+new_order = ['id', 'play_is_goal', 'league', 'year', 'match', 'video_path',  'match_ht', 'caption', 'narration', 'play_start', 'play_end', 'play_start_MT','play_end_MT']
 print("Saving to csv...")
 if all_goals:
     all_goals_df = pd.DataFrame(all_goals)
@@ -164,6 +212,13 @@ if all_plays:
     all_plays = pd.DataFrame(all_plays)
     all_plays = all_plays[new_order]
     all_plays.to_csv("results/all_plays_MT.csv", index=False)
+
+
+records = all_plays.to_dict(orient="records")
+
+with open("results/all_plays_MT.json", "w", encoding="utf-8") as f:
+    json.dump(records, f, ensure_ascii=False, indent=4)
+
 
 print("finished")
 
