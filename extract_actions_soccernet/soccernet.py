@@ -2,6 +2,7 @@
 import os
 import json
 import re
+from score_chance_play import ScoreChancePlay
 
 # -----------------------------
 # Outcome phrases classification
@@ -245,7 +246,7 @@ def select_event(cluster):
 # -----------------------------
 # File processing
 # -----------------------------
-def process_file(input_path, output_path):
+def process_file(input_path):
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -294,17 +295,55 @@ def process_file(input_path, output_path):
 
     clustered_events = cluster_events(events_data, time_gap=1.0)
 
-    output_lines = [f"{e['label']} {e['time_str']} {e['desc']}" for e in clustered_events]
+    return clustered_events
+
+def output_lines_file(events, output_path, threshold):
+    output_lines = []
+    print(f'file threshold: {threshold}')
+    for e in events:
+        if e['score'] >threshold: 
+            output_lines.append(f"{e['label']} {e['time_str']} [{e['score']}] {e['desc']}")
+
+    #output_lines = [f"{e['label']} {e['time_str']} {e['desc']}" for e in events]
 
     with open(output_path, 'w', encoding='utf-8') as f_out:
         f_out.write("\n".join(output_lines))
 
+
+def get_score_threshold(events, accepted_amt):
+    """
+    Calculates danger score value for all non goal desccriptions and 
+    return the threshold point at the nth caption
+    Args:
+        events: all events for that captions file
+        accepted_amt: number of close chance actions kept
+    Returns:
+    scores and events
+        threshold acceptance score
+    """
+    scorer = ScoreChancePlay()
+    close_chance_scores = []
+    for event in events:
+        if event['label'] == 'No Goal':
+            score = scorer.calculate_danger_score(event['desc'])
+            event['score'] = score
+            close_chance_scores.append([score, event]) 
+        else:
+            event['score'] = 15 # GIVE MAXIMUM SCORE TO GOALS
+        
+    if len(close_chance_scores) > accepted_amt:
+        close_chance_scores.sort(key=lambda x: x[0], reverse=True)
+        return events, close_chance_scores[accepted_amt][0] #return score of the threshold
+    else:
+        return events, -2 #lowest score
+
 # -----------------------------
 # Main entry
 # -----------------------------
-def main():
-    input_dir = r"E:\FrankGuo\SoccerNet\all_captions_2024"
-    output_dir = r"E:\FrankGuo\SoccerNet\goal_results_2024"
+if __name__ == "__main__":
+    close_chances_per_game = 4
+    input_dir = r"D:\\soccernetCaptionDataset\\caption-2023"
+    output_dir = r"results\\extract_actions_soccernet\\goal_results_2023"
     os.makedirs(output_dir, exist_ok=True)
     for filename in os.listdir(input_dir):
         if filename.endswith('.json'):
@@ -312,10 +351,12 @@ def main():
             output_filename = f"output_{os.path.splitext(filename)[0]}.txt"
             output_path = os.path.join(output_dir, output_filename)
             try:
-                process_file(input_path, output_path)
+                events = process_file(input_path)
+                events, danger_score_threshold = get_score_threshold(events, close_chances_per_game)
+                output_lines_file(events, output_path, 0) #pass -5 as threshold to output all
                 print(f"Processed: {filename}")
             except Exception as e:
                 print(f"Error processing {filename}: {str(e)}")
 
-if __name__ == "__main__":
-    main()
+
+
