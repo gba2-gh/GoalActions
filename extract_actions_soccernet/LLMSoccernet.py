@@ -1,4 +1,4 @@
-# Batch Processing Optimized SoccerNet Analysis with DeepSeek API
+# SoccerNet Analysis with DeepSeek API - Batch Processing Implementation
 import os
 import json
 import re
@@ -21,7 +21,7 @@ class DeepSeekConfig:
 
 class BatchDeepSeekAnalyzer:
     """
-    Optimized DeepSeek analyzer with multiple batch processing strategies
+    DeepSeek analyzer with multiple batch processing strategies
     """
     def __init__(self, config: DeepSeekConfig):
         self.config = config
@@ -32,7 +32,7 @@ class BatchDeepSeekAnalyzer:
             "Content-Type": "application/json"
         }
         
-        print(f"🚀 DeepSeek analyzer initialized:")
+        print(f"DeepSeek analyzer initialized:")
         print(f"   Model: {config.model}")
         print(f"   Batch size: {config.batch_size}")
         print(f"   Workers: {config.num_workers}")
@@ -42,7 +42,7 @@ class BatchDeepSeekAnalyzer:
     # ========================================
     def analyze_batch_single_prompt(self, events: List[Dict], context: Dict) -> List[Dict]:
         """
-        Analyze multiple events in a single prompt - MOST EFFICIENT
+        Analyze multiple events in a single prompt for efficiency
         """
         if not events:
             return []
@@ -75,7 +75,7 @@ Return ONLY a JSON array with {len(events)} objects like this:
 ]"""
 
         try:
-            print(f"    🔄 Batch analyzing {len(events)} events...")
+            print(f"    Batch analyzing {len(events)} events...")
             
             response = requests.post(
                 self.config.base_url,
@@ -100,11 +100,11 @@ Return ONLY a JSON array with {len(events)} objects like this:
             parsed_results = self._parse_batch_response(response_text, len(events))
             self.request_count += 1
             
-            print(f"    ✅ Batch completed: {len(parsed_results)} results")
+            print(f"    Batch completed: {len(parsed_results)} results")
             return parsed_results
             
         except Exception as e:
-            print(f"    ❌ Batch error: {e}")
+            print(f"    Batch error: {e}")
             return [self._default_response() for _ in events]
     
     def _parse_batch_response(self, response_text: str, expected_count: int) -> List[Dict]:
@@ -160,7 +160,7 @@ Return ONLY a JSON array with {len(events)} objects like this:
             return results[:expected_count]
             
         except Exception as e:
-            print(f"    ❌ Batch parse error: {e}")
+            print(f"    Batch parse error: {e}")
             return [self._default_response() for _ in range(expected_count)]
     
     # ========================================
@@ -180,7 +180,7 @@ Return ONLY a JSON array with {len(events)} objects like this:
             result = self.analyze_single_event(event, context)
             return index, result
         
-        print(f"    🔄 Parallel processing {len(events)} events with {self.config.num_workers} workers...")
+        print(f"    Parallel processing {len(events)} events with {self.config.num_workers} workers...")
         
         with ThreadPoolExecutor(max_workers=self.config.num_workers) as executor:
             # Submit all tasks
@@ -202,57 +202,52 @@ Return ONLY a JSON array with {len(events)} objects like this:
                 except Exception as e:
                     print(f"Error processing event: {e}")
         
-        print(f"    ✅ Parallel processing completed: {len(results)} results")
+        print(f"    Parallel processing completed: {len(results)} results")
         return results
     
     # ========================================
-    # STRATEGY 3: Pre-filtering + Batch
+    # STRATEGY 3: Conservative Pre-filtering + LLM Analysis
     # ========================================
-    def analyze_batch_smart_filter(self, events: List[Dict], context: Dict) -> List[Dict]:
+    def analyze_batch_conservative_filter(self, events: List[Dict], context: Dict) -> List[Dict]:
         """
-        Pre-filter obvious non-shooting events, then batch process the rest
+        Conservative pre-filtering - only filter out obvious non-game events
+        Let LLM handle all actual game situations
         """
-        # Quick rule-based pre-filtering
-        shooting_events = []
+        llm_events = []
         results = []
         
-        non_shot_keywords = [
-            'substitution', 'yellow card', 'red card', 'offside', 'throw-in',
-            'corner kick preparation', 'free kick preparation', 'pass', 
-            'cross', 'dribble', 'tackle', 'clearance', 'foul', 'injury'
-        ]
-        
-        shot_keywords = [
-            'shot', 'shoot', 'strike', 'header', 'volley', 'effort', 
-            'finish', 'attempt', 'goal', 'score', 'save', 'block', 'miss'
+        # Conservative filtering - only remove clear administrative events
+        obvious_non_game_events = [
+            'match official', 'referee', 'var check', 'video assistant',
+            'technical area', 'bench', 'coaching staff', 'medical staff',
+            'halftime', 'full-time', 'kickoff', 'match delay',
+            'weather condition', 'pitch condition', 'stadium announcement'
         ]
         
         for i, event in enumerate(events):
             desc_lower = event['description'].lower()
             
-            # Quick non-shot detection
-            if any(keyword in desc_lower for keyword in non_shot_keywords):
+            # Only filter out clear administrative/non-game events
+            if any(admin_term in desc_lower for admin_term in obvious_non_game_events):
+                print(f"    Filtered obvious non-game event: '{event['description'][:50]}...'")
                 results.append((i, {
                     'is_goal': False,
                     'is_shooting_action': False,
                     'is_penalty': False,
                     'team': None,
-                    'confidence': 0.95  # High confidence in non-shot
+                    'confidence': 0.99  # Very high confidence this isn't a shooting action
                 }))
                 continue
             
-            # Quick shot detection
-            if any(keyword in desc_lower for keyword in shot_keywords):
-                shooting_events.append((i, event))
-            else:
-                # Uncertain - send to LLM
-                shooting_events.append((i, event))
+            # Send everything else to LLM - let it decide
+            llm_events.append((i, event))
         
-        print(f"    🎯 Pre-filtered: {len(shooting_events)} potential shooting events out of {len(events)}")
+        filtered_count = len(events) - len(llm_events)
+        print(f"    Conservative filter: {filtered_count} obvious non-game events filtered, {len(llm_events)} events for LLM analysis")
         
-        # Batch process remaining events
-        if shooting_events:
-            indices, events_to_process = zip(*shooting_events)
+        # Batch process remaining events with LLM
+        if llm_events:
+            indices, events_to_process = zip(*llm_events)
             llm_results = self.analyze_batch_single_prompt(list(events_to_process), context)
             
             for idx, result in zip(indices, llm_results):
@@ -263,7 +258,104 @@ Return ONLY a JSON array with {len(events)} objects like this:
         return [result for _, result in results]
     
     # ========================================
-    # STRATEGY 4: Caching
+    # STRATEGY 4: LLM-First Two-Pass Analysis
+    # ========================================
+    def analyze_batch_two_pass(self, events: List[Dict], context: Dict) -> List[Dict]:
+        """
+        Two-pass analysis: 
+        1. Quick LLM scan to identify potential shooting events
+        2. Detailed LLM analysis of identified events
+        """
+        if not events:
+            return []
+        
+        print(f"    Two-pass analysis: Step 1 - Quick screening of {len(events)} events")
+        
+        # Step 1: Quick screening prompt
+        events_text = ""
+        for i, event in enumerate(events):
+            events_text += f"{i+1}. {event['game_time']}: {event['description']}\n"
+        
+        screening_prompt = f"""Quickly scan these soccer events and identify which ones could potentially involve shooting actions (shots, goals, saves, blocks, etc.).
+
+Match: {context['home_team']} vs {context['away_team']}
+
+Events:
+{events_text}
+
+Return ONLY a JSON array of event numbers that could involve shooting actions:
+[1, 3, 7, 12, ...]
+
+Be inclusive - when in doubt, include the event. Only exclude obvious non-shooting events like substitutions, cards, etc."""
+
+        try:
+            response = requests.post(
+                self.config.base_url,
+                headers=self.headers,
+                json={
+                    "model": self.config.model,
+                    "messages": [{"role": "user", "content": screening_prompt}],
+                    "max_tokens": 1000,
+                    "temperature": 0.0  # Lower temperature for screening
+                },
+                timeout=60
+            )
+            
+            if response.status_code != 200:
+                print(f"Screening API error: {response.status_code}")
+                # Fallback: analyze all events
+                return self.analyze_batch_single_prompt(events, context)
+            
+            result = response.json()
+            response_text = result['choices'][0]['message']['content']
+            
+            # Parse screening results
+            potential_indices = self._parse_screening_response(response_text)
+            self.request_count += 1
+            
+        except Exception as e:
+            print(f"Screening error: {e}")
+            # Fallback: analyze all events
+            return self.analyze_batch_single_prompt(events, context)
+        
+        # Step 2: Detailed analysis of selected events
+        results = [self._default_response() for _ in events]
+        
+        if potential_indices:
+            selected_events = [events[i-1] for i in potential_indices if 1 <= i <= len(events)]
+            print(f"    Step 2 - Detailed analysis of {len(selected_events)} potential shooting events")
+            
+            if selected_events:
+                detailed_results = self.analyze_batch_single_prompt(selected_events, context)
+                
+                # Map results back to original positions
+                for i, event_num in enumerate(potential_indices):
+                    if 1 <= event_num <= len(events) and i < len(detailed_results):
+                        results[event_num - 1] = detailed_results[i]
+        
+        print(f"    Two-pass analysis completed")
+        return results
+    
+    def _parse_screening_response(self, response_text: str) -> List[int]:
+        """Parse screening response to get list of event numbers"""
+        try:
+            # Look for JSON array of numbers
+            array_match = re.search(r'\[[\d,\s]*\]', response_text)
+            if array_match:
+                json_array = json.loads(array_match.group(0))
+                if isinstance(json_array, list):
+                    return [int(x) for x in json_array if str(x).isdigit()]
+            
+            # Fallback: look for individual numbers
+            numbers = re.findall(r'\b\d+\b', response_text)
+            return [int(n) for n in numbers if 1 <= int(n) <= 1000]  # Reasonable range
+            
+        except Exception as e:
+            print(f"Screening parse error: {e}")
+            return []
+    
+    # ========================================
+    # STRATEGY 5: Caching
     # ========================================
     def analyze_with_cache(self, event: Dict, context: Dict) -> Dict:
         """
@@ -272,7 +364,7 @@ Return ONLY a JSON array with {len(events)} objects like this:
         cache_key = event['description'].lower().strip()
         
         if cache_key in self.cache:
-            print(f"    💾 Cache hit: '{cache_key[:30]}...'")
+            print(f"    Cache hit: '{cache_key[:30]}...'")
             return self.cache[cache_key].copy()
         
         result = self.analyze_single_event(event, context)
@@ -319,7 +411,7 @@ Return: {{
                 print(f"API error {response.status_code}: {response.text}")
                 
         except Exception as e:
-            print(f"    ❌ Single event error: {e}")
+            print(f"    Single event error: {e}")
         
         return self._default_response()
     
@@ -407,10 +499,10 @@ def process_file_batch_optimized(input_path, output_path, analyzer, strategy="si
             })
     
     if not events_to_process:
-        print("  ⚠️ No events to process")
+        print("  No events to process")
         return
     
-    print(f"  📊 Processing {len(events_to_process)} events with strategy: {strategy}")
+    print(f"  Processing {len(events_to_process)} events with strategy: {strategy}")
     
     # Choose processing strategy
     start_time = time.time()
@@ -430,8 +522,11 @@ def process_file_batch_optimized(input_path, output_path, analyzer, strategy="si
     elif strategy == "parallel":
         all_results = analyzer.analyze_batch_parallel(events_to_process, context)
     
-    elif strategy == "smart_filter":
-        all_results = analyzer.analyze_batch_smart_filter(events_to_process, context)
+    elif strategy == "conservative_filter":
+        all_results = analyzer.analyze_batch_conservative_filter(events_to_process, context)
+    
+    elif strategy == "two_pass":
+        all_results = analyzer.analyze_batch_two_pass(events_to_process, context)
     
     else:  # cache strategy
         all_results = []
@@ -441,7 +536,7 @@ def process_file_batch_optimized(input_path, output_path, analyzer, strategy="si
     
     processing_time = time.time() - start_time
     per_event_time = processing_time / len(events_to_process) if events_to_process else 0
-    print(f"  ⏱️ Processing took {processing_time:.1f} seconds ({per_event_time:.2f}s per event)")
+    print(f"  Processing took {processing_time:.1f} seconds ({per_event_time:.2f}s per event)")
     
     # Convert results to your existing format
     events_data = []
@@ -460,7 +555,7 @@ def process_file_batch_optimized(input_path, output_path, analyzer, strategy="si
             'confidence': analysis['confidence']
         })
     
-    print(f"  ⚽ Found {len(events_data)} shooting events")
+    print(f"  Found {len(events_data)} shooting events")
     
     # Write results
     output_lines = []
@@ -473,19 +568,26 @@ def process_file_batch_optimized(input_path, output_path, analyzer, strategy="si
 
 def main():
     """Main function with batch processing options"""
-    print("🚀 Batch Processing SoccerNet Analysis with DeepSeek")
-    print("=" * 50)
+    print("SoccerNet Analysis with DeepSeek - LLM-Focused Strategies")
+    print("=" * 55)
     
     # Configuration
     API_KEY = os.getenv("DEEPSEEK_API_KEY")
     if not API_KEY:
-        print("❌ DEEPSEEK_API_KEY environment variable not set!")
+        print("DEEPSEEK_API_KEY environment variable not set!")
         print("Please set your API key: export DEEPSEEK_API_KEY='your_key_here'")
         return
     
-    STRATEGY = "single_prompt"  # Choose: "single_prompt", "parallel", "smart_filter", "cache"
-    BATCH_SIZE = 5  # Events per batch (for single_prompt strategy)
-    NUM_WORKERS = 3  # Parallel workers (for parallel strategy)
+    # Choose your strategy:
+    # "single_prompt" - Most efficient, batch multiple events per API call
+    # "parallel" - Process events in parallel threads
+    # "conservative_filter" - Only filter obvious non-game events, LLM analyzes rest
+    # "two_pass" - LLM screening then detailed analysis (most thorough)
+    # "cache" - Cache identical event descriptions
+    
+    STRATEGY = "single_prompt"  # Recommended for most cases
+    BATCH_SIZE = 8  # Increased batch size for efficiency
+    NUM_WORKERS = 3  # For parallel strategy
     
     config = DeepSeekConfig(
         api_key=API_KEY,
@@ -494,16 +596,27 @@ def main():
     )
     
     analyzer = BatchDeepSeekAnalyzer(config)
-    print(f"📋 Using strategy: {STRATEGY}")
+    print(f"Using strategy: {STRATEGY}")
+    print(f"Strategy description:")
+    
+    strategy_descriptions = {
+        "single_prompt": "Batch multiple events in single API calls - most efficient",
+        "parallel": "Process events in parallel threads - good for rate limit handling",
+        "conservative_filter": "LLM analyzes all game events, filters only obvious admin events",
+        "two_pass": "LLM screening + detailed analysis - most thorough but slower",
+        "cache": "Cache identical event descriptions - good for repeated matches"
+    }
+    
+    print(f"   {strategy_descriptions.get(STRATEGY, 'Custom strategy')}")
     
     # Paths
     input_dir = r"E:\FrankGuo\SoccerNet\llmtest\caption2024"
-    output_dir = rf"E:\FrankGuo\SoccerNet\llmtest\deepseek_batch_{STRATEGY}"
+    output_dir = rf"E:\FrankGuo\SoccerNet\llmtest\deepseek_improved_{STRATEGY}"
     os.makedirs(output_dir, exist_ok=True)
     
     # Process files
     json_files = [f for f in os.listdir(input_dir) if f.endswith('.json')]
-    print(f"📁 Found {len(json_files)} files")
+    print(f"Found {len(json_files)} files")
     
     total_start = time.time()
     
@@ -512,18 +625,25 @@ def main():
         output_filename = f"deepseek_output_{os.path.splitext(filename)[0]}.txt"
         output_path = os.path.join(output_dir, output_filename)
         
-        print(f"\n🏈 Processing {filename} ({i+1}/{len(json_files)})")
+        print(f"\nProcessing {filename} ({i+1}/{len(json_files)})")
         
         try:
             process_file_batch_optimized(input_path, output_path, analyzer, STRATEGY)
-            print(f"✅ Completed: {filename}")
+            print(f"Completed: {filename}")
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"Error: {e}")
     
     total_time = time.time() - total_start
-    print(f"\n🎉 All files processed in {total_time:.1f} seconds!")
-    print(f"📊 Stats: {analyzer.request_count} total API calls")
-    print(f"💾 Cache size: {len(analyzer.cache)} entries")
+    print(f"\nAll files processed in {total_time:.1f} seconds!")
+    print(f"Stats: {analyzer.request_count} total API calls")
+    print(f"Cache size: {len(analyzer.cache)} entries")
+    
+    # Strategy recommendations
+    print(f"\nStrategy Performance Notes:")
+    print(f"   • single_prompt: Best balance of speed and accuracy")
+    print(f"   • two_pass: Most thorough but uses 2x API calls")
+    print(f"   • conservative_filter: Only filters obvious non-game events")
+    print(f"   • parallel: Good for handling rate limits")
 
 if __name__ == "__main__":
     main()
