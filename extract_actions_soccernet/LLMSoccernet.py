@@ -66,11 +66,12 @@ Rules:
 - is_shooting_action: true for shots, headers, volleys that could score
 - is_penalty: true only if penalty kick mentioned
 - team: "home"/"away"/null based on which team's player
+- danger_level: 1-5 (5 = most dangerous) for non-goal shooting actions; 0 otherwise
 - confidence: 0.0-1.0 how certain you are
 
 Return ONLY a JSON array with {len(events)} objects like this:
 [
-  {{"is_goal": boolean, "is_shooting_action": boolean, "is_penalty": boolean, "team": "home"/"away"/null, "confidence": float}},
+  {{"is_goal": boolean, "is_shooting_action": boolean, "is_penalty": boolean, "team": "home"/"away"/null, "danger_level": int, "confidence": float}},
   ... // {len(events)} objects total
 ]"""
 
@@ -235,6 +236,7 @@ Return ONLY a JSON array with {len(events)} objects like this:
                     'is_shooting_action': False,
                     'is_penalty': False,
                     'team': None,
+                    'danger_level': 0,
                     'confidence': 0.99  # Very high confidence this isn't a shooting action
                 }))
                 continue
@@ -387,6 +389,7 @@ Return: {{
   "is_shooting_action": true/false,
   "is_penalty": true/false,
   "team": "home"/"away"/null,
+  "danger_level": integer,  // 1-5 for non-goal shooting actions, 0 otherwise
   "confidence": 0.0-1.0
 }}"""
 
@@ -434,6 +437,7 @@ Return: {{
             'is_shooting_action': False,
             'is_penalty': False,
             'team': None,
+            'danger_level': 0,
             'confidence': 0.0
         }
         
@@ -454,6 +458,14 @@ Return: {{
         except:
             parsed['confidence'] = 0.0
         
+        # Validate danger_level
+        if 'danger_level' not in parsed:
+            parsed['danger_level'] = 0
+        try:
+            parsed['danger_level'] = max(0, min(5, int(parsed['danger_level'])))
+        except:
+            parsed['danger_level'] = 0
+        
         if parsed['team'] not in ['home', 'away', None]:
             parsed['team'] = None
             
@@ -465,6 +477,7 @@ Return: {{
             'is_shooting_action': False,
             'is_penalty': False,
             'team': None,
+            'danger_level': 0,
             'confidence': 0.0
         }
 
@@ -538,30 +551,49 @@ def process_file_batch_optimized(input_path, output_path, analyzer, strategy="si
     per_event_time = processing_time / len(events_to_process) if events_to_process else 0
     print(f"  Processing took {processing_time:.1f} seconds ({per_event_time:.2f}s per event)")
     
-    # Convert results to your existing format
-    events_data = []
-    for i, (event, analysis) in enumerate(zip(events_to_process, all_results)):
-        if not analysis['is_shooting_action']:
-            continue
-        
-        label = "Goal" if analysis['is_goal'] else "No Goal"
-        if analysis['is_goal'] and analysis['is_penalty']:
-            label = "Penalty"
-        
-        events_data.append({
-            'label': label,
-            'time_str': event['game_time'],
-            'desc': event['description'],
-            'confidence': analysis['confidence']
-        })
-    
-    print(f"  Found {len(events_data)} shooting events")
+    # Collect goals and dangerous plays
+    goals = []
+    dangerous_plays = []
+
+    for event, analysis in zip(events_to_process, all_results):
+        if analysis['is_goal']:
+            # This is a goal
+            goals.append({
+                'label': "Goal",
+                'team': analysis['team'],
+                'time_str': event['game_time'],
+                'desc': event['description'],
+                'confidence': analysis['confidence']
+            })
+        elif analysis['danger_level'] > 0:  # Non-goal dangerous play
+            dangerous_plays.append({
+                'label': "Dangerous Play",
+                'team': analysis['team'],
+                'time_str': event['game_time'],
+                'desc': event['description'],
+                'danger_level': analysis['danger_level'],
+                'confidence': analysis['confidence']
+            })
+
+    # Select top 4 dangerous plays (sort by danger_level descending)
+    dangerous_plays.sort(key=lambda x: x['danger_level'], reverse=True)
+    top_dangerous = dangerous_plays[:4]
+
+    # Combine goals + top dangerous plays
+    events_data = goals + top_dangerous
+
+    print(f"  Found {len(events_data)} key events ({len(goals)} goals + {len(top_dangerous)} dangerous plays)")
     
     # Write results
     output_lines = []
     for e in events_data:
-        confidence_str = f" (confidence: {e['confidence']:.2f})"
-        output_lines.append(f"{e['label']} {e['time_str']} {e['desc']}{confidence_str}")
+        team_str = e['team'] if e['team'] in ['home', 'away'] else 'unknown'
+        conf_str = f"(confidence: {e['confidence']:.2f})"
+        
+        if e['label'] == "Goal":
+            output_lines.append(f"Goal ({team_str}) {e['time_str']}: {e['desc']} {conf_str}")
+        else:
+            output_lines.append(f"Dangerous Play ({team_str}) {e['time_str']}: {e['desc']} [Danger: {e['danger_level']}/5] {conf_str}")
 
     with open(output_path, 'w', encoding='utf-8') as f_out:
         f_out.write("\n".join(output_lines))
