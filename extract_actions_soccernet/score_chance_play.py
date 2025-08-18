@@ -5,6 +5,12 @@ import os
 class ScoreChancePlay:
     def __init__(self):
 
+        self.include_outcome_score = True
+        self.include_quality_score = True
+        self.include_location_score = True
+
+
+
         # Keys should be lowercase for case-insensitive matching.
         # Relevant Action keywords extracted with Gemini
         self.OUTCOME_SCORES = {
@@ -21,9 +27,9 @@ class ScoreChancePlay:
         "inches wide": 7,
         "inches over": 7,
         "whisker": 7,
-        "narrowly wide": 7,
-        "narrowly over": 7,
-        "painfully wide": 7,
+        "narrowly wide": 6,
+        "narrowly over": 6,
+        "painfully wide": 6,
         
         # Tier 2 (Dangerous)
         "decent save": 5,
@@ -36,40 +42,28 @@ class ScoreChancePlay:
         "block": 4,
         
         # Tier 3 (Moderate Danger)
-        "comfortable save": 2,
-        "easy save": 2,
-        "comfortably saved": 2,
-        "saved by the keeper": 2,
-        "effort is saved": 2,
+        "comfortable save": 3,
+        "easy save": 3,
+        "comfortably saved": 3,
+        "saved by the keeper": 3,
+        "effort is saved": 3,
         
         # Tier 4 (Low/No Danger)
-        "goes wide": 0,
-        "sails well over": 0,
-        "flies high over": 0,
-        "way wide": 0,
-        "misses": 0,
-        "clears the ball": 0,
-        "snuffed out": 0,
-        "cuts it out": 0,
-        "intercepts": 0,
-        "overhits the cross": 0,
+        "goes wide": 2,
+        "sails well over": 2,
+        "flies high over": 2,
+        "well wide"
+        "way wide": 2,
+        "misses": 2,
+        "clears the ball": 1,
+        "snuffed out": 1,
+        "cuts it out": 1,
+        "intercepts": 1,
+        "overhits the cross": 1,
         }
 
-        self.MODIFIER_SCORES = {
-        # Location Modifiers
-        "inside the box": 3,
-        "penalty spot": 3,
-        "penalty area": 3,
-        "close range": 3,
-        "goal area": 3,
-        "edge of the box": 1,
-        "edge of the area": 1,
-        "just outside the box": 1,
-        "18 metres": 1,
-        "from distance": 0,
-        "long-range": 0,
-        
-        # Quality Modifiers (Positive)
+        self.QUALITY_SCORES = {
+                  # Quality Modifiers (Positive)
         "great opportunity": 2,
         "golden chance": 2,
         "perfect cross": 2,
@@ -86,35 +80,71 @@ class ScoreChancePlay:
         "doesn't hit properly": -2,
         "not at all pretty": -2,
         "wastes": -2,
+
+
         }
 
+        self.LOCATION_SCORES = {
+        # Location Modifiers
+        "inside the box": 3,
+        "penalty spot": 3,
+        "penalty area": 3,
+        "close range": 3,
+        "goal area": 3,
+        "edge of the box": 1,
+        "edge of the area": 1,
+        "just outside the box": 1,
+        "from distance": 0,
+        "long-range": 0,
+        }
+
+    def calculate_outcome_score(self, phrase):
+        base_score = 0
+        for keyword, score in self.OUTCOME_SCORES.items():
+            if keyword in phrase:
+                # We take the highest outcome score found as the base
+                if score > base_score:
+                    base_score = score
+
+
+        return base_score
+
+    def calculate_location_score(self, phrase):
+        base_score = 0
+        for keyword, score in self.LOCATION_SCORES.items():
+            if keyword in phrase:
+                # We take the highest outcome score found as the base
+                if score > base_score:
+                    base_score = score
+        return base_score
+    
+    def calculate_quality_score(self, phrase):
+        base_score = 0
+        for keyword, score in self.QUALITY_SCORES.items():
+            if keyword in phrase:
+                # We take the highest outcome score found as the base
+                base_score += score
+        return base_score
+    
 
     def calculate_danger_score(self, phrase: str) -> int:
         """
         Calculates a 'danger score' for a football action phrase based on predefined keywords.
-
         Args:
             phrase: A string describing a football action.
-
         Returns:
             An integer score representing the level of danger.
         """
         # Convert phrase to lowercase for case-insensitive matching
         lower_phrase = phrase.lower()
-        
-        base_score = 0
-        for keyword, score in self.OUTCOME_SCORES.items():
-            if keyword in lower_phrase:
-                # We take the highest outcome score found as the base
-                if score > base_score:
-                    base_score = score
-        
-        modifier_score = 0
-        for keyword, score in self.MODIFIER_SCORES.items():
-            if keyword in lower_phrase:
-                modifier_score += score # in this case, only 1 modifier score
+       
+        score = self.calculate_outcome_score(lower_phrase)
+        if self.include_location_score:
+            score += self.calculate_location_score(lower_phrase)
+        if self.include_quality_score:
+            score += self.calculate_quality_score(lower_phrase)
                 
-        return base_score + modifier_score
+        return score
 
         
 

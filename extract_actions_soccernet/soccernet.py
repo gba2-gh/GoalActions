@@ -3,7 +3,9 @@ import os
 import json
 import re
 from score_chance_play import ScoreChancePlay
-
+import pandas as pd
+import hashlib
+import csv
 # -----------------------------
 # Outcome phrases classification
 # -----------------------------
@@ -81,7 +83,7 @@ EXCLUSION_PHRASES = [
 
     # Set-piece prep without shot
     'prepares to take', 'take a corner', 'swings in a corner',
-    'corner kick', 'free kick',
+    #'corner kick', 'free kick', we want to keep actions following a corner kick or free kick
 
     # Non-shot actions - defensive, passing, clearing, possession
     'cleared after', 'attempted to dribble', 'attempts to send a pass',
@@ -92,12 +94,13 @@ EXCLUSION_PHRASES = [
 
     # Add your recent phrases here:
     'send over a cross',
-    'send a pass',
-    'is blocked',
-    'pass ends up',
+    'fails to send a pass',
+    'tries to send a pass',
+    #'is blocked',
+    #'pass ends up', didnt find
     'passes end up',
     'signal a throw-in',
-    'out of play',
+    #'out of play',
     'throws a throw-in',
     'possession',
     'short passes'
@@ -165,46 +168,23 @@ def parse_game_time_for_sorting(game_time):
 # -----------------------------
 # Event classification
 # -----------------------------
-def is_goal_event(annotation, goal_events, home_team, away_team):
-    description = annotation['description'].lower()
-    total_minutes = parse_game_time(annotation['gameTime'])
-    if total_minutes is None:
-        return False, None, False  # Added penalty flag
 
-    penalty_detected = 'penalty' in description
-    
-    for event in goal_events:
-        if 0 <= (total_minutes - event['minute']) <= 1.5:
-            last_name_lower = event['last_name'].lower()
-            full_name_lower = event['full_name'].lower()
-            if last_name_lower in description or full_name_lower in description:
-                return True, event['team'], penalty_detected  # Return penalty status
 
-    goal_keywords = ['goal!', 'scores!', 'netted!', 'converts!', 'finishes!',
-                    'goal:', 'scores :', 'scored!', 'goal -', 'scores -']
-    if any(kw in description for kw in goal_keywords):
-        if home_team.lower() in description:
-            return True, 'home', penalty_detected
-        elif away_team.lower() in description:
-            return True, 'away', penalty_detected
-
-    if OUTCOME_REGEX.search(description):
-        if 'saved' not in description and 'blocked' not in description and 'clear' not in description:
-            if home_team.lower() in description:
-                return True, 'home', penalty_detected
-            elif away_team.lower() in description:
-                return True, 'away', penalty_detected
-
-    return False, None, penalty_detected
-
-    
-def is_shooting_action(description):
-    """Check if description is a genuine shot attempt (goal or no goal)."""
+def exclude_irrelevant_phrases(description):
     desc = description.lower()
     # Skip irrelevant/statistical/set-piece prep
     if EXCLUSION_REGEX.search(desc):
-        return False
+        return 
+    
+
+def is_shooting_action(description, irrelevant_phrases_bool):
+    """Check if description is a genuine shot attempt (goal or no goal)."""
+    desc = description.lower()
     # Must contain a shooting term
+    if irrelevant_phrases_bool:
+        if EXCLUSION_REGEX.search(desc):
+            return False
+
     if not SHOOTING_REGEX.search(desc):
         return False
     # Saves/blocks/denied remain valid as shot attempts
@@ -243,10 +223,56 @@ def cluster_events(events, time_gap=1.0):
 def select_event(cluster):
     """For non-goal clusters, keep the last event"""
     return cluster[-1]  # Always last event in cluster
+
+
+
+
+def is_goal_event(annotation, goal_events, home_team, away_team, test_goal_kw, test_event_time):
+    description = annotation['description'].lower()
+    total_minutes = parse_game_time(annotation['gameTime'])
+    if total_minutes is None:
+        return None, False  # Added penalty flag
+
+    penalty_detected = 'penalty' in description
+    
+
+    
+    #TESTED THIS CHECKS, THEY ARE RETURNING NON-GOAL PLAYS AS GOALS, THIS SHOULD BE REMOVED, Gibran
+    #delete consecutive events
+    # if test_event_time:
+    #     for event in goal_events:
+    #         if 0 <= (total_minutes - event['minute']) <= 1.5:
+    #             last_name_lower = event['last_name'].lower()
+    #             full_name_lower = event['full_name'].lower()
+    #             if last_name_lower in description or full_name_lower in description:
+    #                 return True, event['team'], penalty_detected  # Return penalty status
+
+    # if(test_goal_kw):
+    #     goal_keywords = ['goal!', 'scores!', 'netted!', 'converts!', 'finishes!',
+    #                     'goal:', 'scores :', 'scored!', 'goal -', 'scores -']
+    #     if any(kw in description for kw in goal_keywords):
+    #         if home_team.lower() in description:
+    #             return True, 'home', penalty_detected
+    #         elif away_team.lower() in description:
+    #             return True, 'away', penalty_detected
+
+    #
+    # if OUTCOME_REGEX.search(description):
+    #     #if 'saved' not in description and 'blocked' not in description and 'clear' not in description: ##FOUND THIS TO BE IRRELEVANT, so i comment it, Gibran
+    #     if home_team.lower() in description:
+    #         return True, 'home', penalty_detected
+    #     elif away_team.lower() in description:
+    #         return True, 'away', penalty_detected
+
+    return None, penalty_detected
+
+
+
+
 # -----------------------------
 # File processing
 # -----------------------------
-def process_file(input_path):
+def process_file(input_path, test_goal_kw = True, irrelevant_phrases_bool = True, test_event_time=True):
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -273,9 +299,10 @@ def process_file(input_path):
         # Handle goal annotations
         if annotation.get('label') in ['soccer-ball', 'soccer-ball-own']:
             is_goal=True
-            _, team, is_penalty = is_goal_event(annotation, goal_events, home_team, away_team)
-        elif is_shooting_action(desc):
-            is_goal, team,_ = is_goal_event(annotation, goal_events, home_team, away_team)
+            team, is_penalty = is_goal_event(annotation, goal_events, home_team, away_team, test_goal_kw, test_event_time)
+        elif is_shooting_action(desc, irrelevant_phrases_bool):
+            is_goal =False 
+            team,_ = is_goal_event(annotation, goal_events, home_team, away_team, test_goal_kw, test_event_time)
         else:
             continue
 
@@ -297,17 +324,47 @@ def process_file(input_path):
 
     return clustered_events
 
+
+def make_caption_id(file_path, caption):
+    # Extract the match name (last part of path)
+    match_name = os.path.basename(file_path).replace(" ", "_")
+    # Normalize caption text for consistency
+    norm_caption = caption.strip().lower()
+    # Create a short hash of the caption
+    hash_str = hashlib.md5(norm_caption.encode("utf-8")).hexdigest()[:10]
+    # Combine match name + hash
+    return f"{match_name}_{hash_str}"
+
+
 def output_lines_file(events, output_path, threshold):
     output_lines = []
-    print(f'file threshold: {threshold}')
+    score = 0
+    goals = 0
+    non_goals = 0
+    penalty =0
+    all_captions = []
+    #print(f'file threshold: {threshold}')
     for e in events:
         if e['score'] >threshold: 
-            output_lines.append(f"{e['label']} {e['time_str']} [{e['score']}] {e['desc']}")
-
+            line = f"{e['label']} {e['time_str']} [{e['score']}] {e['desc']}"
+            output_lines.append(line)
+            
+            if e['label'] == 'Goal':
+                goals +=1
+            elif e['label'] == 'No Goal':
+                score += e['score']
+                non_goals +=1 
+            elif e['label'] == 'Penalty':
+                penalty +=1
+            if(e['label'] == 'No Goal'):
+                all_captions.append([make_caption_id(output_path, e['desc']), line])
+        
     #output_lines = [f"{e['label']} {e['time_str']} {e['desc']}" for e in events]
 
     with open(output_path, 'w', encoding='utf-8') as f_out:
         f_out.write("\n".join(output_lines))
+
+    return score, goals, non_goals, penalty, all_captions
 
 
 def get_score_threshold(events, accepted_amt):
@@ -322,6 +379,7 @@ def get_score_threshold(events, accepted_amt):
         threshold acceptance score
     """
     scorer = ScoreChancePlay()
+    scorer.include_location_score = False # Not include location score to maintain variability of shot distances
     close_chance_scores = []
     for event in events:
         if event['label'] == 'No Goal':
@@ -336,27 +394,78 @@ def get_score_threshold(events, accepted_amt):
         return events, close_chance_scores[accepted_amt][0] #return score of the threshold
     else:
         return events, -2 #lowest score
+    
+
+def score_analysis(events, threshold):
+    total_score = 0
+    for e in events:
+        if e['score'] >threshold: 
+            total_score += e['score']
+    print(f'total danger score = {total_score}')
+
 
 # -----------------------------
 # Main entry
 # -----------------------------
-if __name__ == "__main__":
-    close_chances_per_game = 4
-    input_dir = r"D:\\soccernetCaptionDataset\\caption-2023"
-    output_dir = r"results\\extract_actions_soccernet\\goal_results_2023"
+def get_all_captions(input_dir, output_dir, test_goal_kw = False, irrelevant_phrases_bool =True, test_event_time=True, close_chances_per_game = 100):
+    total_goals = 0
+    total_non_goals = 0
+    total_score = 0
+    total_penalty = 0
+    number_events = 0
+    all_captions =[]
     os.makedirs(output_dir, exist_ok=True)
-    for filename in os.listdir(input_dir):
-        if filename.endswith('.json'):
-            input_path = os.path.join(input_dir, filename)
-            output_filename = f"output_{os.path.splitext(filename)[0]}.txt"
-            output_path = os.path.join(output_dir, output_filename)
-            try:
-                events = process_file(input_path)
-                events, danger_score_threshold = get_score_threshold(events, close_chances_per_game)
-                output_lines_file(events, output_path, 0) #pass -5 as threshold to output all
-                print(f"Processed: {filename}")
-            except Exception as e:
-                print(f"Error processing {filename}: {str(e)}")
+    for root, dirs, files in os.walk(input_dir):
+        for filename in files:
+            if filename.endswith('.json'):
+                input_path = os.path.join(root, filename)
+                #print(input_path)
+                parts = root.split("\\")
+                output_filename = f'output_{parts[5]}_{parts[6]}_{parts[7]}.txt'
+                #output_filename = f"output_{os.path.splitext(root)[1]}.txt"
+                output_path = os.path.join(output_dir, output_filename)
+                try:
+                    events = process_file(input_path,test_goal_kw, irrelevant_phrases_bool, test_event_time)
+                    events, danger_score_threshold = get_score_threshold(events, close_chances_per_game)
+                    number_events += len(events)
+                    score, goals, non_goals, penalty, captions= output_lines_file(events, output_path, danger_score_threshold) #pass -5 as threshold to output all
+                    total_score += score
+                    total_goals += goals
+                    total_non_goals += non_goals
+                    total_penalty += penalty
+                    all_captions.extend(captions)
+
+                    #print(f"Processed: {filename}")
+                except Exception as e:
+                    print(f"Error processing {filename}: {str(e)}")
+    print(f'total danger score = {total_score}')
+    print(f'num events = {number_events}')
+    print(f'avg = {total_score/total_non_goals}')
+    print(f'Goals: {total_goals}, No goals: {total_non_goals}, Penalties: {total_penalty}, Total= {total_goals+total_non_goals+total_penalty}')
+
+    return all_captions
+    # with open("captions.csv", "w", newline="", encoding="utf-8") as f:
+    #     writer = csv.writer(f)
+    #     writer.writerow(["id", "caption"])  # header
+    #     writer.writerows(all_captions)
+
+if __name__ == "__main__":
+    output_dir = r"results\\extract_actions_soccernet\\goal_results_2024"
+    input_dir = r"D:\\soccernetCaptionDataset\\caption-2024"
+    # Testing code, to see how different kw conditions affected the result
+    #df_goalkw_true = pd.DataFrame(get_all_captions(output_dir, test_goal_kw=False, irrelevant_phrases_bool=True, test_event_time=False), columns= ['id', 'caption'])
+    #df_goalkw_false = pd.DataFrame(get_all_captions(output_dir, test_goal_kw=False, irrelevant_phrases_bool=False, test_event_time=False), columns= ['id', 'caption'])
+    #df_diff= df_goalkw_false[~df_goalkw_false['id'].isin(df_goalkw_true['id'])]
+    #df_diff.to_csv('diff.csv', index=False)
+
+    
+    all_actions_id = pd.DataFrame(get_all_captions(input_dir, output_dir, test_goal_kw=False, irrelevant_phrases_bool=True, test_event_time=False, close_chances_per_game= 5), columns= ['id', 'caption'])
+    all_actions_id.to_csv('results/extract_actions_soccernet/all_actions_id.csv', index=False)
+    ##TODO change output file to json, keep score as data
+
+
+    
+    
 
 
 
