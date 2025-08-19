@@ -136,6 +136,10 @@ for filename in list_dir:
             all_plays.append(play)
                 
 
+
+##UPDATE
+
+
 # ADD MatchTime times, when they exist..
 for play in all_plays:
     root_path = 'D:\\MatchTime'
