@@ -2,6 +2,8 @@ import ollama
 import json
 import time
 import os
+import pandas as pd
+
 example = """
 
 Example:
@@ -113,7 +115,7 @@ Return only the lines that are directly related to the action in 'full_caption'.
 Keep:
 - Lines describing the build-up to the action.
 - Lines describing the action itself.
-- Lines right after the action that describe reactions, quality, or follow-up on the same play.
+- Lines after the action that describe reactions, quality, or follow-up on the same play.
 
 Remove:
 - Lines about unrelated plays.
@@ -127,6 +129,7 @@ Rules:
 3. Do not add any new text or explanations.
 4. Output only the filtered list, no extra comments.
 
+Be sure to keep all lines to refer to the goal!
 
 Now process:
 
@@ -229,47 +232,53 @@ Narration:
     return response['message']['content'].strip()
 
 
-#main
-input_path= 'results/all_plays_MT.json'
-if os.path.exists(input_path):
-    with open(input_path, 'r', encoding='utf-8' ) as file:
-        data = json.load(file)
+if __name__ == "__main__": 
+    output_path = 'results/validate_comments'
+    input_path= 'results/all_plays.json'
+    if os.path.exists(input_path):
+        with open(input_path, 'r', encoding='utf-8' ) as file:
+            data = json.load(file)
 
-results = []
-count =0
-for example in data:
-   
-    # if count%10 != 0:
-    #     count+=1
-    #     continue
-    # count+=1
-    # if count > 300:
-    #     break
+    results = []
+    count =0
+    for example in data:
     
-    try:
-        print(f"Processing commentary ID {example['id']}...")
-        if(example['narration'] == ""):
-            comm_output =""
-        else:
-            comm_output = get_clean_commentary(example['caption'], example['narration'])
+        # if count%10 != 0:
+        #     count+=1
+        #     continue
+        # count+=1
+        if count > 100:
+            break
         
-        example['llama3_comment'] = comm_output
+        try:
+            print(f"Processing commentary ID {example['id']}...")
+            if(example['narration'] == ""):
+                comm_output =""
+            else:
+                comm_output = get_clean_commentary(example['caption'], example['narration'])
+            
+            example['llama3_comment'] = comm_output
 
-        results.append({
-            "id": example["id"],
-            "commentary": example["caption"],
-            "commentary": comm_output
-        })
+            results.append({
+                "id": example["id"],
+                "commentary": example["caption"],
+                "commentary": comm_output
+            })
 
-        time.sleep(1)  # Respect model rate
-    except Exception as e:
-        print(f"Error processing ID {example['id']}: {e}")
+            time.sleep(1)  # Respect model rate
+        except Exception as e:
+            print(f"Error processing ID {example['id']}: {e}")
 
-# === OUTPUT: Save to JSON ===
-with open("results/validate_comments_output2.json", "w", encoding="utf-8") as f:
-    json.dump(results, f, indent=2, ensure_ascii=False)
+    os.makedirs(output_path, exist_ok=True)
 
-with open("results/all_plays_validate_comments.json", "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
+    # === OUTPUT: Save to JSON ===
+    with open(f"{output_path}/validate_comments_output.json", "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
 
-print(" generation complete. Results saved to results/validate_comments_output.json")
+    with open(f"{output_path}/all_plays_validate_comments.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    print(" generation complete. Results saved to results/validate_comments_output.json")
+
+    df = pd.DataFrame(results)
+    df.to_csv(f"{output_path}/validate_comment_output.csv", index=False)
