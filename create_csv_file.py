@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import json
 from create_videos_from_csv import ClipExtractor
+from football_action_extraction import FootballActionExtractor
 #This file
 # ADDs MatchTime times, when they exist..
 #Changes 'label' from str to boolean, excludes penalties
@@ -19,7 +20,7 @@ def clean_json_soccernet(all_plays):
         if play['half_time'] >2:
             continue
         else:
-            play['id'] = i
+            play['id'] = int(i)
             i+=1
             if play['label'] == 'Goal':
                 play['label'] = True
@@ -54,6 +55,9 @@ def add_matchtime_times(all_plays):
         
 
 def add_asr_commentary(all_plays, start_offset = 30, end_offset = 30):
+
+    #all_plays = all_plays.to_dict(orient="records")
+
     ## add echoes 
     no_comm_goals=0
     no_comm_chances=0
@@ -88,6 +92,7 @@ def add_asr_commentary(all_plays, start_offset = 30, end_offset = 30):
 
 
 
+
 def process_all_events():
 
     with open('results/extract_actions_soccernet/all_events.json', mode='r', encoding='utf-8') as f:
@@ -110,40 +115,99 @@ def process_all_events():
     all_plays_df.to_csv("results/all_plays.csv", index=False)
 
 
-def process_all_events_updated():
-    all_plays_df = pd.read_csv('results/all_plays_sorted.csv')
-    all_plays_df['time'] = all_plays_df['end_time']
-
-    #Get not found
-    all_plays_nf = all_plays_df[all_plays_df['time_label'] == 'NF']
-    all_plays_nf.to_csv("results/all_plays_nf.csv", index=False)
-
-    #get only updated
-    updated_plays = all_plays_df[all_plays_df['updated']]
-    all_plays_df = updated_plays
-
-    all_plays = all_plays_df.to_dict(orient="records")
-    #add_matchtime_times(all_plays)
-    
-
-    add_asr_commentary(all_plays, start_offset=10, end_offset=10)
-
+def save_results(all_plays_updated):
+    #Save results
     print("Saving to json...")
-    with open('results/all_plays.json', mode='w', encoding='utf-8') as f:
-        json.dump(all_plays, f, indent=2)
+    with open('results/all_plays_updated.json', mode='w', encoding='utf-8') as f:
+        json.dump(all_plays_updated, f, indent=2)
 
+    all_plays_updated_df = pd.DataFrame(all_plays_updated)
     #new_order = ['id', 'hash', 'label', 'league', 'season', 'match', 'half_time', 'caption', 'score', 'narration', 'time']
     print("Saving to csv...")
-    all_plays_df = pd.DataFrame(all_plays)
+    all_plays_df = pd.DataFrame(all_plays_updated_df)
     #all_plays_df = all_plays_df[new_order]
     all_plays_df.to_csv("results/all_plays_updated.csv", index=False)
 
-    return all_plays_df
+
+
+from sklearn.model_selection import train_test_split
+
+def divide_data(df):
+
+    # Stratified split by label (80/20)
+    train_df, val_df = train_test_split(
+        df,
+        test_size=0.2,
+        stratify=df["label"],
+        random_state=42  # fixed seed for reproducibility
+    )
+
+    train_df.to_csv("results/divided_data/train.csv", index=False)
+    val_df.to_csv("results/divided_data/val.csv", index=False)
+
+
+    # Save back to JSON if needed
+    train_data = train_df.to_dict(orient="records")
+    test_data = val_df.to_dict(orient="records")
+
+    with open("results/divided_data/train.json", "w", encoding="utf-8") as f:
+        json.dump(train_data, f, indent=2)
+
+    with open("results/divided_data/val.json", "w", encoding="utf-8") as f:
+        json.dump(test_data, f, indent=2)
+
+    print(f"Train size: {len(train_df)}, Val size: {len(val_df)}")
+    print("Split completed and saved to train.json and test.json")
+
+
+
+
+def process_all_events_updated():
+    all_plays_df = pd.read_csv('results/all_plays_sorted.csv')
+
+    ##update specific problems with updated file
+    all_plays_df['time'] = all_plays_df['end_time']
+    all_plays_df['label'] = all_plays_df['label'].apply(lambda x: 1 if x == 'TRUE' else 0)
+
+        #Get not found
+    all_plays_nf = all_plays_df[all_plays_df['time_label'] == 'NF']
+    all_plays_nf.to_csv("results/nf_plays.csv", index=False)
+
+    not_updated_df  = all_plays_df[~all_plays_df['updated']]
+    all_plays_nf.to_csv("results/not_updated_plays.csv", index=False)
+
+
+        #get only updated = TRUE
+    all_plays_updated_df  = all_plays_df[all_plays_df['updated']]
+
+    all_plays_updated = all_plays_updated_df.to_dict(orient="records")
+
+    # convert to dict and add commentary
+    add_asr_commentary(all_plays_updated, start_offset=10, end_offset=10)
+
+    #Find extract action vector
+    extractor = FootballActionExtractor()
+    extractor.extract_from_dict(all_plays_updated)
+
+    save_results(all_plays_updated)
+    
+    all_plays_updated_df = pd.DataFrame(all_plays_updated)
+    divide_data(all_plays_updated_df)
+
+    #Extact clips and save
+    clip_extractor = ClipExtractor()
+    clip_extractor.by_end =True # consider 'Time' as an end_time and not start_time
+    video_output_folder = "results\\video_goal_output_60_updated"
+    clip_extractor.extract_clips(all_plays_updated_df, video_output_folder) # doesnt need to be updated
 
 
 if __name__ == "__main__":
-    clip_extractor = ClipExtractor()
-    clip_extractor.by_end =True
-    all_plays_df  = process_all_events_updated()
-    video_output_folder = "results\\video_goal_output_60_updated"
-    #clip_extractor.extract_clips(all_plays_df, video_output_folder)
+    
+    #process_all_events()
+
+    process_all_events_updated()
+
+
+    
+
+
